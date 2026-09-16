@@ -2,46 +2,23 @@
 
 import React, { useState, useEffect } from 'react';
 
-// Dữ liệu câu hỏi
-const QUESTIONS = [
-  {
-    id: 'q1',
-    text: 'More than sixty companies took part in the trial.',
-    options: ['True', 'False', 'Not Given'],
-    answer: 'True',
-  },
-  {
-    id: 'q2',
-    text: 'Employees who took part had their salaries reduced.',
-    options: ['True', 'False', 'Not Given'],
-    answer: 'False',
-  },
-  {
-    id: 'q3',
-    text: 'The trial found that employees saved money on transport costs.',
-    options: ['True', 'False', 'Not Given'],
-    answer: 'Not Given',
-  },
-  {
-    id: 'q4',
-    text: 'According to the passage, "compressed focus" refers to…',
-    options: [
-      'A software tool used to track working hours',
-      'Employees using limited time more efficiently',
-      'A method for increasing employee salaries',
-      'A government policy on shorter working weeks',
-    ],
-    answer: 'Employees using limited time more efficiently',
-  },
-  {
-    id: 'q5',
-    text: 'Researchers concluded that every company should adopt a four-day week.',
-    options: ['True', 'False', 'Not Given'],
-    answer: 'False',
-  },
-];
+type QuizQuestion = {
+  id: string;
+  text: string;
+  type: 'True/False/Not Given' | 'Trắc nghiệm';
+  options: string[];
+  answer: string;
+  explanation: string;
+};
 
-const DURATION = 5 * 60; // 5 phút
+type QuizData = {
+  title: string;
+  paragraphs: string[];
+  duration: number;
+  questions: QuizQuestion[];
+};
+
+const DEFAULT_DURATION = 5 * 60; // dùng khi chưa tải xong dữ liệu
 
 export default function Home() {
   // State quản lý View
@@ -51,11 +28,17 @@ export default function Home() {
   const [loginNoteVisible, setLoginNoteVisible] = useState(false);
   const [signupNoteVisible, setSignupNoteVisible] = useState(false);
 
-  // State Quiz
+  // State Quiz — dữ liệu giờ lấy từ Notion qua API, không hardcode nữa
+  const [quiz, setQuiz] = useState<QuizData | null>(null);
+  const [quizLoading, setQuizLoading] = useState(false);
+  const [quizError, setQuizError] = useState<string | null>(null);
+
   const [answers, setAnswers] = useState<Record<string, string>>({});
-  const [timeLeft, setTimeLeft] = useState(DURATION);
+  const [timeLeft, setTimeLeft] = useState(DEFAULT_DURATION);
   const [isTimerRunning, setIsTimerRunning] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+
+  const questions = quiz?.questions ?? [];
 
   // Hàm chuyển View
   const showView = (id: 'home' | 'luyen-de' | 'about' | 'login' | 'signup' | 'reading-quiz', anchorId?: string) => {
@@ -70,16 +53,35 @@ export default function Home() {
     }
   };
 
-  const resetQuiz = () => {
+  const resetQuiz = (durationOverride?: number) => {
     setAnswers({});
-    setTimeLeft(DURATION);
+    setTimeLeft(durationOverride ?? quiz?.duration ?? DEFAULT_DURATION);
     setSubmitted(false);
     setIsTimerRunning(true);
   };
 
+  // Gọi API nội bộ (app/api/reading/[slug]/route.ts) để lấy bài đọc + câu hỏi từ Notion
+  const fetchQuiz = async () => {
+    setQuizLoading(true);
+    setQuizError(null);
+    setIsTimerRunning(false);
+    try {
+      const res = await fetch('/api/reading/four-day-week');
+      if (!res.ok) throw new Error('Fetch failed');
+      const data: QuizData = await res.json();
+      setQuiz(data);
+      resetQuiz(data.duration);
+    } catch (err) {
+      console.error(err);
+      setQuizError('Không tải được bài luyện từ hệ thống. Thử lại sau.');
+    } finally {
+      setQuizLoading(false);
+    }
+  };
+
   const goToQuiz = () => {
     showView('reading-quiz');
-    resetQuiz();
+    fetchQuiz();
   };
 
   // Đếm ngược thời gian Quiz
@@ -112,9 +114,10 @@ export default function Home() {
     if (type === 'signup') setSignupNoteVisible(true);
   };
 
-  // Tính điểm & Band
-  const score = QUESTIONS.reduce((acc, q) => acc + (answers[q.id] === q.answer ? 1 : 0), 0);
+  // Tính điểm & Band — dựa trên questions lấy từ Notion
+  const score = questions.reduce((acc, q) => acc + (answers[q.id] === q.answer ? 1 : 0), 0);
   const getBandInfo = (scoreVal: number, total: number) => {
+    if (total === 0) return { band: '—', note: '' };
     const ratio = scoreVal / total;
     if (ratio >= 1) return { band: '8.5–9.0', note: 'Xuất sắc — giữ phong độ này.' };
     if (ratio >= 0.8) return { band: '7.0–7.5', note: 'Rất tốt, chỉ còn vài điểm chặt chẽ cần sửa.' };
@@ -123,11 +126,11 @@ export default function Home() {
     return { band: 'Dưới 5.0', note: 'Nên bắt đầu lại từ các dạng câu cơ bản.' };
   };
 
-  const bandResult = getBandInfo(score, QUESTIONS.length);
+  const bandResult = getBandInfo(score, questions.length);
   const minutes = Math.floor(timeLeft / 60);
   const seconds = (timeLeft % 60).toString().padStart(2, '0');
-  const answeredCount = QUESTIONS.filter((q) => answers[q.id]).length;
-  const allDone = answeredCount === QUESTIONS.length;
+  const answeredCount = questions.filter((q) => answers[q.id]).length;
+  const allDone = questions.length > 0 && answeredCount === questions.length;
 
   return (
     <>
@@ -160,7 +163,6 @@ export default function Home() {
         .view { display: none; }
         .view.active { display: block; }
 
-        /* NAV */
         header { position: sticky; top: 0; z-index: 40; background: rgba(242,246,251,0.92); backdrop-filter: blur(6px); border-bottom: 1px solid var(--line); }
         nav.wrap { display: flex; align-items: center; justify-content: space-between; height: 68px; }
         .brand { display: flex; align-items: center; gap: 10px; font-family: 'Manrope', sans-serif; font-weight: 800; font-size: 18px; color: var(--blue-deep); }
@@ -172,7 +174,6 @@ export default function Home() {
         .btn-primary { background: var(--blue); color: #fff; font-size: 14px; font-weight: 600; padding: 10px 20px; border-radius: 7px; border: none; transition: background .15s ease; }
         .btn-primary:hover { background: var(--blue-deep); }
 
-        /* HERO */
         .hero { padding: 76px 0 64px; }
         .hero-grid { display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 56px; align-items: center; }
         .eyebrow-line { display: flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--blue); font-weight: 600; margin-bottom: 18px; }
@@ -190,7 +191,6 @@ export default function Home() {
         .hero-visual-label { font-size: 12.5px; color: var(--ink-soft); margin-bottom: 4px; }
         .hero-visual-title { font-family: 'Manrope', sans-serif; font-weight: 700; font-size: 16px; color: var(--ink); margin-bottom: 18px; }
 
-        /* SECTIONS */
         .section { padding: 64px 0; }
         .section-head { max-width: 52ch; margin-bottom: 40px; }
         .section-head h2 { font-family: 'Manrope', sans-serif; font-weight: 800; font-size: 28px; color: var(--blue-deep); }
@@ -222,12 +222,10 @@ export default function Home() {
         .hero-grid > * { animation: riseIn .5s ease both; }
         .hero-grid > *:nth-child(2) { animation-delay: .08s; }
 
-        /* SIMPLE PAGE HEADER */
         .page-head { padding: 56px 0 8px; }
         .page-head .eyebrow-line { margin-bottom: 14px; }
         .page-head h1.page-title { font-size: 32px; max-width: none; }
 
-        /* LUYỆN ĐỀ LIST */
         .test-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 32px; }
         .test-card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 26px 24px; }
         .test-badge { display: inline-block; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 20px; margin-bottom: 14px; }
@@ -239,7 +237,6 @@ export default function Home() {
         .btn-full.enabled { background: var(--blue); color: #fff; }
         .btn-full.disabled { background: #EAEFF6; color: #9AA7BB; cursor: not-allowed; }
 
-        /* AUTH FORMS */
         .auth-shell { max-width: 400px; margin: 40px auto 80px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 34px 32px; }
         .auth-shell h1 { font-size: 24px; text-align: center; }
         .auth-shell > p.lede { text-align: center; margin: 10px auto 26px; font-size: 14px; }
@@ -253,11 +250,9 @@ export default function Home() {
         .auth-switch { text-align: center; margin-top: 20px; font-size: 13.5px; color: var(--ink-soft); }
         .auth-switch button { background: none; border: none; color: var(--blue-deep); font-weight: 600; font-size: 13.5px; padding: 0; }
 
-        /* ABOUT */
         .about-body { max-width: 62ch; margin: 28px 0 60px; }
         .about-body p { color: var(--ink-soft); font-size: 15.5px; line-height: 1.7; margin-bottom: 16px; }
 
-        /* READING QUIZ */
         .quiz-shell { max-width: 640px; margin: 36px auto 70px; }
         .quiz-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
         .quiz-title { font-family: 'Manrope', sans-serif; font-weight: 700; font-size: 19px; color: var(--blue-deep); }
@@ -278,6 +273,8 @@ export default function Home() {
         .opt-btn.selected { border-color: var(--blue); background: rgba(46,95,163,0.08); color: var(--blue-deep); font-weight: 600; }
         .quiz-submit { width: 100%; margin-top: 30px; padding: 13px 0; border-radius: 8px; border: none; font-size: 15px; font-weight: 700; background: var(--blue); color: #fff; }
         .quiz-submit:disabled { opacity: .4; cursor: not-allowed; }
+        .quiz-state-msg { text-align: center; padding: 40px 20px; color: var(--ink-soft); font-size: 14.5px; }
+        .quiz-retry-btn { margin-top: 14px; padding: 9px 18px; border-radius: 7px; border: 1px solid var(--blue); background: none; color: var(--blue-deep); font-weight: 600; font-size: 13.5px; }
 
         .result-card { text-align: center; padding: 30px 22px 26px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
         .band-number { font-family: 'Manrope', sans-serif; font-weight: 800; font-size: 42px; color: var(--blue-deep); margin-top: 8px; }
@@ -291,6 +288,7 @@ export default function Home() {
         .review-icon.no { background: rgba(196,69,59,0.12); color: var(--red); }
         .review-q { font-size: 13.5px; color: var(--ink); }
         .review-ans { font-size: 12.5px; color: var(--ink-soft); margin-top: 4px; }
+        .review-explain { font-size: 12.5px; color: var(--ink-soft); margin-top: 4px; font-style: italic; }
         .retry-btn { width: 100%; margin-top: 22px; padding: 12px 0; background: none; color: var(--blue-deep); border: 1px solid var(--blue); border-radius: 8px; font-size: 14px; font-weight: 700; }
         .fade-in { animation: riseIn .35s ease; }
 
@@ -488,27 +486,39 @@ export default function Home() {
         <section className={`view ${activeView === 'reading-quiz' ? 'active' : ''}`} id="view-reading-quiz">
           <div className="wrap">
             <div className="quiz-shell">
-              {!submitted ? (
+
+              {quizLoading && (
+                <div className="quiz-state-msg">Đang tải bài luyện từ hệ thống…</div>
+              )}
+
+              {!quizLoading && quizError && (
+                <div className="quiz-state-msg">
+                  <p>{quizError}</p>
+                  <button className="quiz-retry-btn" onClick={fetchQuiz}>Thử lại</button>
+                </div>
+              )}
+
+              {!quizLoading && !quizError && quiz && !submitted && (
                 <div id="quiz-panel">
                   <div className="quiz-top">
                     <div>
                       <div className="eyebrow-line" style={{ marginBottom: '6px' }}><span className="eyebrow-dot"></span>Reading · Bài luyện thử</div>
-                      <div className="quiz-title">The Four-Day Week Experiment</div>
+                      <div className="quiz-title">{quiz.title}</div>
                     </div>
                     <div className={`quiz-timer ${timeLeft <= 30 ? 'low' : ''}`}>{minutes}:{seconds}</div>
                   </div>
                   <div className="quiz-progress-track">
-                    <div className={`quiz-progress-fill ${timeLeft <= 30 ? 'low' : ''}`} style={{ width: `${(timeLeft / DURATION) * 100}%` }}></div>
+                    <div className={`quiz-progress-fill ${timeLeft <= 30 ? 'low' : ''}`} style={{ width: `${(timeLeft / quiz.duration) * 100}%` }}></div>
                   </div>
 
                   <div className="passage-card">
-                    <p>Between 2022 and 2023, a coalition of researchers coordinated one of the largest trials of the four-day working week ever conducted, involving more than sixty companies across several industries. Employees maintained full salaries while reducing their contracted hours by twenty percent, provided that output remained consistent.</p>
-                    <p>Contrary to early skepticism, most participating firms reported no meaningful decline in revenue, and several noted measurable gains in staff retention. Researchers attributed part of this success to a phenomenon they termed "compressed focus": knowing that time was limited, employees restructured meetings, minimised low-value tasks, and protected blocks of uninterrupted work.</p>
-                    <p>However, the trial also revealed limitations. Roles requiring constant customer-facing availability, such as retail and healthcare, proved far harder to adapt, and some employees reported that unfinished work simply migrated into personal time rather than disappearing altogether. The researchers cautioned that policymakers should not treat the model as a universal solution, but rather as one option among several for rethinking how modern labour is organised.</p>
+                    {quiz.paragraphs.map((p, i) => (
+                      <p key={i}>{p}</p>
+                    ))}
                   </div>
 
                   <div className="quiz-questions">
-                    {QUESTIONS.map((q, i) => (
+                    {questions.map((q, i) => (
                       <div className="q-block" key={q.id}>
                         <div className="q-head"><span className="q-num">{i + 1}</span><p className="q-text">{q.text}</p></div>
                         <div className="q-options">
@@ -531,20 +541,22 @@ export default function Home() {
                     onClick={submitQuiz}
                     disabled={!allDone}
                   >
-                    {allDone ? 'Nộp bài' : `Nộp bài (${answeredCount}/${QUESTIONS.length})`}
+                    {allDone ? 'Nộp bài' : `Nộp bài (${answeredCount}/${questions.length})`}
                   </button>
                 </div>
-              ) : (
+              )}
+
+              {!quizLoading && !quizError && quiz && submitted && (
                 <div id="result-panel">
                   <div className="result-card fade-in">
                     <div className="eyebrow-line" style={{ justifyContent: 'center' }}><span className="eyebrow-dot"></span>Kết quả</div>
                     <div className="band-number">{bandResult.band}</div>
                     <div className="band-label">Band ước tính</div>
                     <p className="result-note">{bandResult.note}</p>
-                    <div className="score-row">{score}/{QUESTIONS.length} câu đúng</div>
+                    <div className="score-row">{score}/{questions.length} câu đúng</div>
                   </div>
                   <div className="review-wrap">
-                    {QUESTIONS.map((q, i) => {
+                    {questions.map((q, i) => {
                       const userAns = answers[q.id];
                       const correct = userAns === q.answer;
                       return (
@@ -558,14 +570,16 @@ export default function Home() {
                                 <> — Đáp án đúng: <strong style={{ color: 'var(--blue)' }}>{q.answer}</strong></>
                               )}
                             </p>
+                            {q.explanation && <p className="review-explain">{q.explanation}</p>}
                           </div>
                         </div>
                       );
                     })}
                   </div>
-                  <button className="retry-btn" onClick={resetQuiz}>Làm lại</button>
+                  <button className="retry-btn" onClick={() => resetQuiz()}>Làm lại</button>
                 </div>
               )}
+
             </div>
           </div>
         </section>
